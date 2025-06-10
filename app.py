@@ -82,6 +82,51 @@ def create_formatted_confidence_markdown(confidence_data):
     """
     return md
 
+def create_3dmol_html(cif_file_path):
+    """为给定的CIF文件路径创建一个嵌入式3Dmol.js查看器的HTML。"""
+    if not cif_file_path:
+        return "<div style='height: 500px; display: flex; align-items: center; justify-content: center;'><p>没有可显示的结构文件。</p></div>"
+    
+    # Gradio 通过 /file=<path> 提供文件服务
+    # 我们需要确保浏览器可以访问这个路径
+    file_url = f"/file={cif_file_path}"
+
+    html_content = f"""
+<script src="https://cdnjs.cloudflare.com/ajax/libs/3Dmol/2.1.0/3Dmol-min.js"></script>
+<div style="height: 500px; width: 100%; position: relative;" id='molviewer_container_{Path(cif_file_path).name}'></div>
+<script>
+  (function() {{
+    let element = document.getElementById('molviewer_container_{Path(cif_file_path).name}');
+    if (!element) {{
+        console.error('3Dmol container not found: molviewer_container_{Path(cif_file_path).name}');
+        return;
+    }}
+    let config = {{ backgroundColor: 'white' }};
+    let viewer = $3Dmol.createViewer(element, config);
+    let url = '{file_url}';
+    
+    fetch(url)
+        .then(response => {{
+            if (!response.ok) {{
+                throw new Error('Network response was not ok for CIF file.');
+            }}
+            return response.text();
+        }})
+        .then(data => {{
+            viewer.addModel(data, "cif");
+            viewer.setStyle({{}}, {{cartoon: {{color: 'spectrum'}}}}); // 为蛋白质链使用卡通着色
+            viewer.setStyle({{hetflag: true}}, {{stick: {{radius: 0.3, colorscheme: 'elemProp'}} }}); // 为配体使用球棍模型
+            viewer.zoomTo();
+            viewer.render();
+        }})
+        .catch(err => {{
+            console.error("Failed to load CIF model from {file_url}:", err);
+            element.innerHTML = "<p>加载3D结构时出错。详情请查看控制台。文件路径: {cif_file_path}</p>";
+        }});
+  }})();
+</script>
+"""
+    return html_content
 
 def run_boltz_prediction(
     protein_sequence, 
@@ -106,6 +151,8 @@ def run_boltz_prediction(
     # run_dir = 'tmp_boltz_run'  # 使用固定目录以便于调试和查看结果
     # Path(run_dir).mkdir(exist_ok=True)
     
+    initial_3d_html = "<div style='height: 500px; display: flex; align-items: center; justify-content: center;'><p>等待预测开始...</p></div>"
+
     try:
         # 2. 生成 YAML 配置文件
         input_dir = Path(run_dir) / "input"
@@ -148,7 +195,7 @@ def run_boltz_prediction(
         with open(yaml_path, 'w') as f:
             yaml.dump(config_data, f, sort_keys=False)
 
-        yield f"✅ YAML 配置文件已生成于: {yaml_path}\n", None, None, None, None, None, None
+        yield f"✅ YAML 配置文件已生成于: {yaml_path}\n", initial_3d_html, "等待中...", "等待中...", None, None, None
 
         # 3. 构建并运行 boltz 命令
         cmd = [
@@ -164,7 +211,7 @@ def run_boltz_prediction(
         if use_potentials:
             cmd.append("--use_potentials")
             
-        yield f"⚙️ 准备运行 Boltz...\n命令: {' '.join(cmd)}\n\n", None, None, None, None, None, None
+        yield f"⚙️ 准备运行 Boltz...\n命令: {' '.join(cmd)}\n\n", initial_3d_html, "等待中...", "等待中...", None, None, None
 
         # 使用 Popen 实时流式传输输出
         process = subprocess.Popen(
@@ -181,17 +228,17 @@ def run_boltz_prediction(
             if not line:
                 break
             log_output += line
-            yield log_output, None, None, None, None, None, None
+            yield log_output, initial_3d_html, "运行中...", "运行中...", None, None, None
         
         process.wait()
 
         if process.returncode != 0:
             final_log = log_output + f"\n\n❌ Boltz 进程以错误码 {process.returncode} 结束。"
-            yield final_log, None, None, None, None, None, None
+            yield final_log, initial_3d_html, "错误", "错误", None, None, None
             return
 
         final_log = log_output + "\n\n✅ Boltz 预测完成！"
-        yield final_log, None, None, None, None, None, None
+        yield final_log, initial_3d_html, "处理结果中...", "处理结果中...", None, None, None
 
         # 4. 处理输出文件
         prediction_folder = output_dir / "boltz_results_input/predictions" / config_name
@@ -203,9 +250,14 @@ def run_boltz_prediction(
         confidence_file = prediction_folder / f"confidence_{config_name}_model_0.json"
         affinity_file = prediction_folder / f"affinity_{config_name}.json"
 
-        if not best_structure_file.exists():
-            yield final_log + "\n\n❌ 错误：找不到预测的结构文件！", None, None, None, None, None, None
-            return
+        structure_html_content = "<div style='height: 500px; display: flex; align-items: center; justify-content: center;'><p>未找到结构文件。</p></div>"
+        best_structure_file_path_for_download = None
+
+        if best_structure_file.exists():
+            structure_html_content = create_3dmol_html(str(best_structure_file))
+            best_structure_file_path_for_download = str(best_structure_file)
+        else:
+            final_log += "\n\n❌ 错误：找不到预测的结构文件！"
             
         # 读取JSON数据
         confidence_data = {}
@@ -223,10 +275,10 @@ def run_boltz_prediction(
         affinity_md = create_formatted_affinity_markdown(affinity_data)
         
         yield (final_log + "\n\n🎉 结果已加载。", 
-               str(best_structure_file), 
+               structure_html_content, 
                confidence_md, 
                affinity_md,
-               str(best_structure_file) if best_structure_file.exists() else None,
+               best_structure_file_path_for_download,
                str(confidence_file) if confidence_file.exists() else None,
                str(affinity_file) if affinity_file.exists() else None
               )
@@ -234,9 +286,9 @@ def run_boltz_prediction(
     except FileNotFoundError:
         yield ("❌ 错误: `boltz` 命令未找到。\n"
                "请确保您已经安装了 `boltz-prediction`并且 `boltz` 在您的系统PATH中。", 
-               None, None, None, None, None, None)
+               initial_3d_html, "错误", "错误", None, None, None)
     except Exception as e:
-        yield f"❌ 发生意外错误: {e}", None, None, None, None, None, None
+        yield f"❌ 发生意外错误: {e}", initial_3d_html, "错误", "错误", None, None, None
     # 注意：我们不清理临时目录，因为 Gradio 需要从那里提供文件下载。
     # Gradio 会在会话结束后自动处理临时文件。
 
@@ -299,7 +351,10 @@ with gr.Blocks(theme=gr.themes.Base()) as demo:
                 with gr.TabItem("📈 运行日志"):
                     status_log = gr.Textbox(label="状态和日志", lines=15, interactive=False)
                 with gr.TabItem("🔬 3D 结构"):
-                    model_3d_view = gr.Model3D(label="最佳预测结构 (排名 1)", interactive=False)
+                    model_3d_view = gr.HTML(
+                        label="最佳预测结构 (排名 1)", 
+                        value="<div style='height: 500px; display: flex; align-items: center; justify-content: center;'><p>预测完成后，此处将显示3D结构。</p></div>"
+                    )
                 with gr.TabItem("📊 置信度分数"):
                     confidence_output = gr.Markdown("预测完成后，此处将显示置信度分数。")
                 with gr.TabItem("💞 亲和力分数"):
