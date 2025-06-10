@@ -102,9 +102,9 @@ def run_boltz_prediction(
         return f"错误：{ligand_type} 不能为空。", None, None, None, None, None, None
 
     # 创建一个临时目录来存放所有文件
-    # run_dir = tempfile.mkdtemp(prefix="boltz_gradio_run_")
-    run_dir = 'tmp_boltz_run'  # 使用固定目录以便于调试和查看结果
-    Path(run_dir).mkdir(exist_ok=True)
+    run_dir = tempfile.mkdtemp(prefix="boltz_gradio_run_")
+    # run_dir = 'tmp_boltz_run'  # 使用固定目录以便于调试和查看结果
+    # Path(run_dir).mkdir(exist_ok=True)
     
     try:
         # 2. 生成 YAML 配置文件
