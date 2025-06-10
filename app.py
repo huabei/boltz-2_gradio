@@ -167,7 +167,7 @@ def run_boltz_prediction(
     # run_dir = 'tmp_boltz_run'  # 使用固定目录以便于调试和查看结果
     # Path(run_dir).mkdir(exist_ok=True)
     
-    initial_3d_html = "<div style='height: 600px; display: flex; align-items: center; justify-content: center;'><p>等待预测开始...</p></div>"
+    initial_3d_html = "<div style='height: 600px; display: flex; align-items: center; justify-content: center;'><p>等待预测结束...</p></div>"
 
     try:
         # 2. 生成 YAML 配置文件
