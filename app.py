@@ -352,7 +352,7 @@ with gr.Blocks(theme=gr.themes.Base()) as demo:
             ligand_type.change(fn=update_ligand_label, inputs=ligand_type, outputs=ligand_id)
 
             gr.Markdown("### 步骤 2: 配置预测选项")
-            use_msa_server = gr.Checkbox(label="使用在线 MSA 服务器 (推荐)", value=True)
+            use_msa_server = gr.Checkbox(label="使用在线 MSA 服务器 (必须)", value=True)
             use_potentials = gr.Checkbox(label="使用推理势能 (提高物理真实性)", value=False)
             
             recycling_steps = gr.Slider(
