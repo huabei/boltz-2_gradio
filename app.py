@@ -194,7 +194,7 @@ def run_boltz_prediction(
         yield final_log, None, None, None, None, None, None
 
         # 4. 处理输出文件
-        prediction_folder = output_dir / "predictions" / config_name
+        prediction_folder = output_dir / "boltz_results_input/predictions" / config_name
         
         # 找到排名第一的结构文件
         best_structure_file = prediction_folder / f"{config_name}_model_0.cif"
