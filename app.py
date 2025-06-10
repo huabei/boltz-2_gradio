@@ -36,14 +36,14 @@ def create_formatted_affinity_markdown(affinity_data):
     )
     
     md = f"""
-    ### 亲和力预测结果
-    | 指标 | 预测值 |
-    | :--- | :--- |
-    | **预测亲和力值** | **`{value_str}`** |
-    | **结合概率** | **`{prob_str}`** |
-    
-    ---
-    {explanation}
+### 亲和力预测结果
+| 指标 | 预测值 |
+| :--- | :--- |
+| **预测亲和力值** | **`{value_str}`** |
+| **结合概率** | **`{prob_str}`** |
+
+---
+{explanation}
     """
     return md
 
@@ -71,20 +71,18 @@ def create_formatted_confidence_markdown(confidence_data):
     )
 
     md = f"""
-    ### 结构置信度分数
-    | 指标 | 预测值 |
-    | :--- | :--- |
-    | **综合置信度** | **`{score_str}`** |
-    | **iptm (链间)** | **`{iptm_str}`** |
-    | **complex_plddt (局部)** | **`{plddt_str}`** |
+### 结构置信度分数
+| 指标 | 预测值 |
+| :--- | :--- |
+| **综合置信度** | **`{score_str}`** |
+| **iptm (链间)** | **`{iptm_str}`** |
+| **complex_plddt (局部)** | **`{plddt_str}`** |
 
-    ---
-    {explanation}
+---
+{explanation}
     """
     return md
-
-# 移除旧的 create_3dmol_html 函数
-
+print(create_formatted_confidence_markdown({'confidence_score': 0.0, 'iptm': 0.0, 'complex_plddt': 0.0}))
 # 添加新的 get_molstar_html 函数
 def get_molstar_html(mmcif_base64):
     return f"""
