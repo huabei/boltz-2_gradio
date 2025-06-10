@@ -82,7 +82,6 @@ def create_formatted_confidence_markdown(confidence_data):
 {explanation}
     """
     return md
-print(create_formatted_confidence_markdown({'confidence_score': 0.0, 'iptm': 0.0, 'complex_plddt': 0.0}))
 # 添加新的 get_molstar_html 函数
 def get_molstar_html(mmcif_base64):
     return f"""
