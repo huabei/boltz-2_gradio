@@ -6,6 +6,7 @@ import shutil
 import os
 import json
 from pathlib import Path
+import base64 # 新增导入
 
 def create_formatted_affinity_markdown(affinity_data):
     """将亲和力JSON数据格式化为易于阅读的Markdown。"""
@@ -82,51 +83,69 @@ def create_formatted_confidence_markdown(confidence_data):
     """
     return md
 
-def create_3dmol_html(cif_file_path):
-    """为给定的CIF文件路径创建一个嵌入式3Dmol.js查看器的HTML。"""
-    if not cif_file_path:
-        return "<div style='height: 500px; display: flex; align-items: center; justify-content: center;'><p>没有可显示的结构文件。</p></div>"
-    
-    # Gradio 通过 /file=<path> 提供文件服务
-    # 我们需要确保浏览器可以访问这个路径
-    file_url = f"/file={cif_file_path}"
+# 移除旧的 create_3dmol_html 函数
 
-    html_content = f"""
-<script src="https://cdnjs.cloudflare.com/ajax/libs/3Dmol/2.1.0/3Dmol-min.js"></script>
-<div style="height: 500px; width: 100%; position: relative;" id='molviewer_container_{Path(cif_file_path).name}'></div>
-<script>
-  (function() {{
-    let element = document.getElementById('molviewer_container_{Path(cif_file_path).name}');
-    if (!element) {{
-        console.error('3Dmol container not found: molviewer_container_{Path(cif_file_path).name}');
-        return;
-    }}
-    let config = {{ backgroundColor: 'white' }};
-    let viewer = $3Dmol.createViewer(element, config);
-    let url = '{file_url}';
-    
-    fetch(url)
-        .then(response => {{
-            if (!response.ok) {{
-                throw new Error('Network response was not ok for CIF file.');
-            }}
-            return response.text();
-        }})
-        .then(data => {{
-            viewer.addModel(data, "cif");
-            viewer.setStyle({{}}, {{cartoon: {{color: 'spectrum'}}}}); // 为蛋白质链使用卡通着色
-            viewer.setStyle({{hetflag: true}}, {{stick: {{radius: 0.3, colorscheme: 'elemProp'}} }}); // 为配体使用球棍模型
-            viewer.zoomTo();
-            viewer.render();
-        }})
-        .catch(err => {{
-            console.error("Failed to load CIF model from {file_url}:", err);
-            element.innerHTML = "<p>加载3D结构时出错。详情请查看控制台。文件路径: {cif_file_path}</p>";
-        }});
-  }})();
-</script>
-"""
-    return html_content
+# 添加新的 get_molstar_html 函数
+def get_molstar_html(mmcif_base64):
+    return f"""
+    <iframe
+        id="molstar_frame"
+        style="width: 100%; height: 600px; border: none;"
+        srcdoc='
+            <!DOCTYPE html>
+            <html>
+                <head>
+                    <script src="https://cdn.jsdelivr.net/npm/@rcsb/rcsb-molstar/build/dist/viewer/rcsb-molstar.js"></script>
+                    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@rcsb/rcsb-molstar/build/dist/viewer/rcsb-molstar.css">
+                </head>
+                <body>
+                    <div id="protein-viewer" style="width: 1200px; height: 400px; position: center"></div>
+                    <script>
+                        console.log("Initializing viewer...");
+                        (async function() {{
+                            // Create plugin instance
+                            const viewer = new rcsbMolstar.Viewer("protein-viewer");
+
+                            // CIF data in base64
+                            const mmcifData = "{mmcif_base64}";
+
+                            // Convert base64 to blob
+                            const blob = new Blob(
+                                [atob(mmcifData)],
+                                {{ type: "text/plain" }}
+                            );
+
+                            // Create object URL
+                            const url = URL.createObjectURL(blob);
+
+                            try {{
+                                // Load structure
+                                await viewer.loadStructureFromUrl(url, "mmcif");
+                            }} catch (error) {{
+                                console.error("Error loading structure:", error);
+                            }}
+                      }})();
+                    </script>
+                </body>
+            </html>
+        '>
+    </iframe>"""
+
+def get_initial_molstar_html():
+    """为 Gradio 界面生成初始的 Mol* 查看器 HTML。"""
+    default_cif_path = Path("example.cif") # 假设 example.cif 在应用根目录
+    if default_cif_path.exists():
+        try:
+            mmcif_bytes = default_cif_path.read_bytes()
+            mmcif_base64 = base64.b64encode(mmcif_bytes).decode('utf-8')
+            return get_molstar_html(mmcif_base64)
+        except Exception as e:
+            error_message = f"加载默认 example.cif 时出错: {e}"
+            print(error_message)
+            return f"<div style='height: 600px; display: flex; align-items: center; justify-content: center;'><p>{error_message}</p></div>"
+    else:
+        # 如果 example.cif 不存在，返回一个空的 Mol* 查看器或提示信息
+        return get_molstar_html("") # 传递空字符串，让 Mol* 内部处理或显示无数据
 
 def run_boltz_prediction(
     protein_sequence, 
@@ -151,7 +170,7 @@ def run_boltz_prediction(
     # run_dir = 'tmp_boltz_run'  # 使用固定目录以便于调试和查看结果
     # Path(run_dir).mkdir(exist_ok=True)
     
-    initial_3d_html = "<div style='height: 500px; display: flex; align-items: center; justify-content: center;'><p>等待预测开始...</p></div>"
+    initial_3d_html = "<div style='height: 600px; display: flex; align-items: center; justify-content: center;'><p>等待预测开始...</p></div>"
 
     try:
         # 2. 生成 YAML 配置文件
@@ -250,14 +269,21 @@ def run_boltz_prediction(
         confidence_file = prediction_folder / f"confidence_{config_name}_model_0.json"
         affinity_file = prediction_folder / f"affinity_{config_name}.json"
 
-        structure_html_content = "<div style='height: 500px; display: flex; align-items: center; justify-content: center;'><p>未找到结构文件。</p></div>"
+        structure_html_content = "<div style='height: 600px; display: flex; align-items: center; justify-content: center;'><p>未找到结构文件。</p></div>"
         best_structure_file_path_for_download = None
 
         if best_structure_file.exists():
-            structure_html_content = create_3dmol_html(str(best_structure_file))
-            best_structure_file_path_for_download = str(best_structure_file)
+            try:
+                mmcif_bytes = best_structure_file.read_bytes()
+                mmcif_base64 = base64.b64encode(mmcif_bytes).decode('utf-8')
+                structure_html_content = get_molstar_html(mmcif_base64)
+                best_structure_file_path_for_download = str(best_structure_file)
+            except Exception as e:
+                final_log += f"\n\n❌ 错误：处理结构文件以在Mol*中显示时出错: {e}"
+                structure_html_content = f"<div style='height: 600px; display: flex; align-items: center; justify-content: center;'><p>处理结构文件时出错: {e}</p></div>"
         else:
             final_log += "\n\n❌ 错误：找不到预测的结构文件！"
+            structure_html_content = get_molstar_html("") # 显示空的Mol*查看器
             
         # 读取JSON数据
         confidence_data = {}
@@ -353,7 +379,8 @@ with gr.Blocks(theme=gr.themes.Base()) as demo:
                 with gr.TabItem("🔬 3D 结构"):
                     model_3d_view = gr.HTML(
                         label="最佳预测结构 (排名 1)", 
-                        value="<div style='height: 500px; display: flex; align-items: center; justify-content: center;'><p>预测完成后，此处将显示3D结构。</p></div>"
+                        # value=get_initial_molstar_html() # 初始加载默认 example.cif 或空查看器
+                        value="<div style='height: 600px; display: flex; align-items: center; justify-content: center;'><p>等待预测开始...</p></div>"
                     )
                 with gr.TabItem("📊 置信度分数"):
                     confidence_output = gr.Markdown("预测完成后，此处将显示置信度分数。")
