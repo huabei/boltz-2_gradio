@@ -102,7 +102,9 @@ def run_boltz_prediction(
         return f"错误：{ligand_type} 不能为空。", None, None, None, None, None, None
 
     # 创建一个临时目录来存放所有文件
-    run_dir = tempfile.mkdtemp(prefix="boltz_gradio_run_")
+    # run_dir = tempfile.mkdtemp(prefix="boltz_gradio_run_")
+    run_dir = 'tmp_boltz_run'  # 使用固定目录以便于调试和查看结果
+    Path(run_dir).mkdir(exist_ok=True)
     
     try:
         # 2. 生成 YAML 配置文件
@@ -239,7 +241,7 @@ def run_boltz_prediction(
     # Gradio 会在会话结束后自动处理临时文件。
 
 # --- Gradio 界面 ---
-with gr.Blocks(theme=gr.themes.Soft()) as demo:
+with gr.Blocks(theme=gr.themes.Base()) as demo:
     gr.Markdown(
         """
         # Boltz 蛋白质-配体复合物预测工具
@@ -333,4 +335,4 @@ with gr.Blocks(theme=gr.themes.Soft()) as demo:
     )
 
 if __name__ == "__main__":
-    demo.launch(debug=True)
+    demo.launch(debug=True, server_name="0.0.0.0")
