@@ -40,6 +40,7 @@ def create_formatted_affinity_markdown(affinity_data):
 | 指标 | 预测值 |
 | :--- | :--- |
 | **预测亲和力值** | **`{value_str}`** |
+| **预测亲和力(Kcal/mol)** | **`{((6-value) * 1.364):.2f}`** |
 | **结合概率** | **`{prob_str}`** |
 
 ---
