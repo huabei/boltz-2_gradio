@@ -9,6 +9,20 @@ import datetime
 from pathlib import Path
 import base64 # 新增导入
 
+def get_available_gpus():
+    """检测可用的GPU数量"""
+    try:
+        result = subprocess.run(['nvidia-smi', '--query-gpu=index', '--format=csv,noheader,nounits'], 
+                              capture_output=True, text=True, timeout=10)
+        if result.returncode == 0:
+            gpu_lines = [line.strip() for line in result.stdout.strip().split('\n') if line.strip()]
+            gpu_count = len(gpu_lines)
+            return gpu_count if gpu_count > 0 else 1
+        else:
+            return 1
+    except (subprocess.TimeoutExpired, FileNotFoundError, Exception):
+        return 1
+
 def create_formatted_affinity_markdown(affinity_data):
     """将亲和力JSON数据格式化为易于阅读的Markdown。"""
     if not affinity_data:
@@ -153,7 +167,8 @@ def run_boltz_prediction(
     recycling_steps, 
     diffusion_samples,
     enable_affinity_prediction,
-    affinity_binder_id
+    affinity_binder_id,
+    gpu_count
 ):
     """
     一个完整的函数，用于生成YAML，运行Boltz，并处理输出。
@@ -267,12 +282,18 @@ def run_boltz_prediction(
             "--output_format", "mmcif", # 使用mmCIF以获得最佳兼容性
             "--override" # 允许覆盖旧结果（在临时目录中通常不需要）
         ]
+        
+        # 添加GPU配置
+        if gpu_count > 1:
+            cmd.extend(["--devices", str(gpu_count)])
+        
         if use_msa_server:
             cmd.append("--use_msa_server")
         if use_potentials:
             cmd.append("--use_potentials")
             
-        yield f"⚙️ 准备运行 Boltz...\n命令: {' '.join(cmd)}\n\n", initial_3d_html, "等待中...", "等待中...", None, None, None
+        gpu_info = f"使用 {gpu_count} 个GPU" if gpu_count > 1 else "使用单GPU"
+        yield f"⚙️ 准备运行 Boltz ({gpu_info})...\n命令: {' '.join(cmd)}\n\n", initial_3d_html, "等待中...", "等待中...", None, None, None
 
         # 使用 Popen 实时流式传输输出
         process = subprocess.Popen(
@@ -414,6 +435,8 @@ with gr.Blocks(theme=gr.themes.Base()) as demo:
             - 建议使用简短易识别的链ID (如A, B, C, L1, L2等)
             - 亲和力预测仅支持配体分子作为结合物
             - 复杂结构的预测时间较长，请耐心等待
+            - GPU数量设置：更多GPU可以加速预测，但也会消耗更多显存
+            - 临时文件自动保存在当前目录的tmp文件夹中，便于查看和调试
             """
         )
 
@@ -481,6 +504,14 @@ with gr.Blocks(theme=gr.themes.Base()) as demo:
             
             # 高级选项
             with gr.Accordion("高级选项", open=False):
+                # GPU配置
+                available_gpus = get_available_gpus()
+                gpu_count = gr.Slider(
+                    minimum=1, maximum=available_gpus, value=available_gpus, step=1,
+                    label=f"使用GPU数量 (检测到 {available_gpus} 个GPU)",
+                    info=f"选择用于预测的GPU数量。默认使用所有可用GPU ({available_gpus}个)"
+                )
+                
                 recycling_steps = gr.Slider(
                     minimum=1, maximum=10, value=3, step=1, 
                     label="循环步数 (Recycling Steps)",
@@ -659,7 +690,8 @@ with gr.Blocks(theme=gr.themes.Base()) as demo:
             recycling_steps, 
             diffusion_samples,
             enable_affinity,
-            affinity_binder_id
+            affinity_binder_id,
+            gpu_count
         ],
         outputs=[
             status_log,
