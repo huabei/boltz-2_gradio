@@ -5,6 +5,7 @@ import tempfile
 import shutil
 import os
 import json
+import datetime
 from pathlib import Path
 import base64 # 新增导入
 
@@ -172,10 +173,12 @@ def run_boltz_prediction(
         if affinity_binder_id.strip() not in chain_ids:
             return f"错误：结合分子链ID '{affinity_binder_id}' 不存在于当前分子列表中。", None, None, None, None, None, None
 
-    # 创建一个临时目录来存放所有文件
-    run_dir = tempfile.mkdtemp(prefix="boltz_gradio_run_")
-    # run_dir = 'tmp_boltz_run'  # 使用固定目录以便于调试和查看结果
-    # Path(run_dir).mkdir(exist_ok=True)
+    # 创建tmp目录来存放所有文件（便于查看和调试）
+    timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+    tmp_base_dir = Path("tmp")
+    tmp_base_dir.mkdir(exist_ok=True)
+    run_dir = tmp_base_dir / f"boltz_run_{timestamp}"
+    run_dir.mkdir(exist_ok=True)
     
     initial_3d_html = "<div style='height: 600px; display: flex; align-items: center; justify-content: center;'><p>等待预测结束...</p></div>"
 
