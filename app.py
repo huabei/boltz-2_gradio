@@ -146,22 +146,31 @@ def get_initial_molstar_html():
         return get_molstar_html("") # 传递空字符串，让 Mol* 内部处理或显示无数据
 
 def run_boltz_prediction(
-    protein_sequence, 
-    ligand_type, 
-    ligand_identifier, 
+    sequences_config,
     use_msa_server,
     use_potentials,
     recycling_steps, 
-    diffusion_samples
+    diffusion_samples,
+    enable_affinity_prediction,
+    affinity_binder_id
 ):
     """
     一个完整的函数，用于生成YAML，运行Boltz，并处理输出。
+    支持多种分子类型和多条链预测。
     """
     # 1. 输入验证
-    if not protein_sequence.strip():
-        return "错误：蛋白质序列不能为空。", None, None, None, None, None, None
-    if not ligand_identifier.strip():
-        return f"错误：{ligand_type} 不能为空。", None, None, None, None, None, None
+    if not sequences_config or len(sequences_config) == 0:
+        return "错误：至少需要添加一个分子序列。", None, None, None, None, None, None
+    
+    # 验证亲和力预测设置
+    if enable_affinity_prediction:
+        if not affinity_binder_id.strip():
+            return "错误：启用亲和力预测时必须指定结合分子的链ID。", None, None, None, None, None, None
+        
+        # 检查结合分子ID是否存在于配置中
+        chain_ids = [seq.get("chain_id", "").strip() for seq in sequences_config if seq.get("chain_id", "").strip()]
+        if affinity_binder_id.strip() not in chain_ids:
+            return f"错误：结合分子链ID '{affinity_binder_id}' 不存在于当前分子列表中。", None, None, None, None, None, None
 
     # 创建一个临时目录来存放所有文件
     run_dir = tempfile.mkdtemp(prefix="boltz_gradio_run_")
@@ -180,39 +189,71 @@ def run_boltz_prediction(
         config_name = "prediction_config"
         yaml_path = input_dir / f"{config_name}.yaml"
         
-        # 定义配体部分
-        ligand_entry = {"id": "L"} # 使用固定的链ID 'L'
-        if ligand_type == "SMILES":
-            ligand_entry["smiles"] = ligand_identifier
-        else: # CCD Code
-            ligand_entry["ccd"] = ligand_identifier
+        # 构建YAML序列部分
+        yaml_sequences = []
+        for seq_config in sequences_config:
+            chain_id = seq_config["chain_id"].strip()
+            mol_type = seq_config["mol_type"]
+            sequence = seq_config["sequence"].strip()
+            
+            if not chain_id or not sequence:
+                continue  # 跳过空的配置
+            
+            if mol_type == "蛋白质":
+                yaml_sequences.append({
+                    "protein": {
+                        "id": chain_id,
+                        "sequence": sequence
+                    }
+                })
+            elif mol_type == "DNA":
+                yaml_sequences.append({
+                    "dna": {
+                        "id": chain_id,
+                        "sequence": sequence
+                    }
+                })
+            elif mol_type == "RNA":
+                yaml_sequences.append({
+                    "rna": {
+                        "id": chain_id,
+                        "sequence": sequence
+                    }
+                })
+            elif mol_type == "配体(SMILES)":
+                yaml_sequences.append({
+                    "ligand": {
+                        "id": chain_id,
+                        "smiles": sequence
+                    }
+                })
+            elif mol_type == "配体(CCD)":
+                yaml_sequences.append({
+                    "ligand": {
+                        "id": chain_id,
+                        "ccd": sequence
+                    }
+                })
 
         # 构建完整的YAML结构
         config_data = {
-            "sequences": [
-                {
-                    "protein": {
-                        "id": "A", # 使用固定的链ID 'A'
-                        "sequence": protein_sequence.strip()
-                    }
-                },
-                {
-                    "ligand": ligand_entry
-                }
-            ],
-            "properties": [
+            "sequences": yaml_sequences
+        }
+        
+        # 如果启用亲和力预测，添加properties部分
+        if enable_affinity_prediction and affinity_binder_id.strip():
+            config_data["properties"] = [
                 {
                     "affinity": {
-                        "binder": "L" # 指定配体链ID以计算亲和力
+                        "binder": affinity_binder_id.strip()
                     }
                 }
             ]
-        }
         
         with open(yaml_path, 'w') as f:
             yaml.dump(config_data, f, sort_keys=False)
 
-        yield f"✅ YAML 配置文件已生成于: {yaml_path}\n", initial_3d_html, "等待中...", "等待中...", None, None, None
+        yield f"✅ YAML 配置文件已生成于: {yaml_path}\n配置了 {len(yaml_sequences)} 个分子链\n", initial_3d_html, "等待中...", "等待中...", None, None, None
 
         # 3. 构建并运行 boltz 命令
         cmd = [
@@ -320,53 +361,125 @@ def run_boltz_prediction(
 with gr.Blocks(theme=gr.themes.Base()) as demo:
     gr.Markdown(
         """
-        # Boltz 蛋白质-配体复合物预测工具
-        一个简单的界面，用于预测蛋白质-配体复合物的结构和结合亲和力。
+        # Boltz 生物分子复合物预测工具
+        支持蛋白质、DNA、RNA和配体的多条链结构预测，包括结合亲和力计算。
+        
+        **支持的分子类型：**
+        - 🧬 **蛋白质** - 氨基酸序列 (标准单字母代码)
+        - 🧬 **DNA** - 脱氧核苷酸序列 (A, T, C, G)
+        - 🧬 **RNA** - 核糖核苷酸序列 (A, U, C, G)
+        - 💊 **配体** - SMILES字符串或CCD代码 (如ATP, GTP, SAH等)
+        
+        **功能特色：**
+        - ✅ 支持多条链复合物预测
+        - ✅ 自动生成MSA (多序列比对)
+        - ✅ 结构置信度评估
+        - ✅ 结合亲和力预测 (适用于配体)
+        - ✅ 交互式3D结构查看器
         """
     )
+    
+    # 添加帮助信息折叠面板
+    with gr.Accordion("📖 使用说明", open=False):
+        gr.Markdown(
+            """
+            ### 基本使用流程：
+            1. **配置分子序列**：
+               - 手动添加：输入链ID、选择分子类型、输入序列，然后点击"添加分子"
+               - 快速开始：点击示例按钮快速加载预设配置
+               
+            2. **选择预测选项**：
+               - 建议保持"使用在线MSA服务器"选项开启
+               - 可选择启用"推理势能"以提高物理真实性
+               - 如需计算配体结合亲和力，勾选相应选项并指定配体链ID
+               
+            3. **开始预测**：点击"开始预测"按钮，等待计算完成
+            
+            4. **查看结果**：在不同标签页中查看运行日志、3D结构、置信度和亲和力分数
+            
+            ### 输入格式说明：
+            - **蛋白质序列**：使用标准氨基酸单字母代码，如 `MKITIGSGVSAAKKFV...`
+            - **DNA序列**：使用核苷酸字母，如 `ATCGATCGATCG`
+            - **RNA序列**：使用核苷酸字母，如 `AUCGAUCGAUCG`
+            - **SMILES配体**：化学结构的SMILES表示，如 `C1=CC=C(C=C1)C(=O)O` (苯甲酸)
+            - **CCD配体**：PDB化学组分字典代码，如 `ATP`, `GTP`, `SAH`
+            
+            ### 注意事项：
+            - 每个链ID必须唯一
+            - 建议使用简短易识别的链ID (如A, B, C, L1, L2等)
+            - 亲和力预测仅支持配体分子作为结合物
+            - 复杂结构的预测时间较长，请耐心等待
+            """
+        )
 
     with gr.Row():
         with gr.Column(scale=1):
-            gr.Markdown("### 步骤 1: 输入分子信息")
-            protein_seq = gr.Textbox(
-                label="蛋白质序列 (链 A)", 
-                placeholder="输入单条蛋白质链的氨基酸序列...",
-                lines=5
+            gr.Markdown("### 步骤 1: 配置分子序列")
+            
+            # 添加示例按钮
+            with gr.Row():
+                example1_btn = gr.Button("📝 示例1: 蛋白质-配体", variant="secondary", size="sm")
+                example2_btn = gr.Button("📝 示例2: 蛋白质-DNA", variant="secondary", size="sm")
+                example3_btn = gr.Button("📝 示例3: 多链复合物", variant="secondary", size="sm")
+            
+            # 用于存储序列配置的状态
+            sequences_state = gr.State([])
+            
+            with gr.Row():
+                chain_id_input = gr.Textbox(label="链ID", placeholder="例如: A, B, C, L1", scale=1)
+                mol_type_input = gr.Radio(
+                    ["蛋白质", "DNA", "RNA", "配体(SMILES)", "配体(CCD)"], 
+                    label="分子类型", 
+                    value="蛋白质",
+                    scale=1
+                )
+            
+            sequence_input = gr.Textbox(
+                label="序列/标识符", 
+                placeholder="输入氨基酸序列、核苷酸序列、SMILES字符串或CCD代码...",
+                lines=3
             )
-            ligand_type = gr.Radio(
-                ["SMILES", "CCD Code"], 
-                label="配体标识符类型", 
-                value="SMILES"
+            
+            with gr.Row():
+                add_sequence_btn = gr.Button("➕ 添加分子", variant="secondary")
+                clear_sequences_btn = gr.Button("🗑️ 清空所有", variant="secondary")
+            
+            # 显示当前配置的序列
+            sequences_display = gr.Dataframe(
+                headers=["链ID", "分子类型", "序列/标识符"],
+                datatype=["str", "str", "str"],
+                label="已配置的分子序列",
+                interactive=False
             )
-            ligand_id = gr.Textbox(
-                label="配体 SMILES 字符串 (链 L)", 
-                placeholder="例如: C1=CC=C(C=C1)C(=O)O"
-            )
-
-            def update_ligand_label(choice):
-                if choice == "SMILES":
-                    return gr.Textbox(label="配体 SMILES 字符串 (链 L)", placeholder="例如: C1=CC=C(C=C1)C(=O)O")
-                else:
-                    return gr.Textbox(label="配体 CCD Code (链 L)", placeholder="例如: ATP, SAH")
-
-            ligand_type.change(fn=update_ligand_label, inputs=ligand_type, outputs=ligand_id)
 
             gr.Markdown("### 步骤 2: 配置预测选项")
-            use_msa_server = gr.Checkbox(label="使用在线 MSA 服务器 (必须)", value=True)
+            use_msa_server = gr.Checkbox(label="使用在线 MSA 服务器 (推荐)", value=True)
             use_potentials = gr.Checkbox(label="使用推理势能 (提高物理真实性)", value=False)
             
-            recycling_steps = gr.Slider(
-                minimum=1, maximum=10, value=3, step=1, 
-                label="循环步数 (Recycling Steps)",
-                info="更多的步数可能提高精度，但会增加时间。默认: 3"
-            )
-            diffusion_samples = gr.Slider(
-                minimum=1, maximum=10, value=1, step=1,
-                label="扩散样本数 (Diffusion Samples)",
-                info="生成多个候选结构以选择最优。默认: 1"
-            )
+            # 亲和力预测选项
+            with gr.Group():
+                gr.Markdown("#### 亲和力预测 (可选)")
+                enable_affinity = gr.Checkbox(label="启用结合亲和力预测", value=False)
+                affinity_binder_id = gr.Textbox(
+                    label="结合分子链ID", 
+                    placeholder="例如: L1 (必须是上面已添加的链ID)",
+                    visible=False
+                )
             
-            run_button = gr.Button("🚀 开始预测", variant="primary")
+            # 高级选项
+            with gr.Accordion("高级选项", open=False):
+                recycling_steps = gr.Slider(
+                    minimum=1, maximum=10, value=3, step=1, 
+                    label="循环步数 (Recycling Steps)",
+                    info="更多的步数可能提高精度，但会增加时间。默认: 3"
+                )
+                diffusion_samples = gr.Slider(
+                    minimum=1, maximum=10, value=1, step=1,
+                    label="扩散样本数 (Diffusion Samples)",
+                    info="生成多个候选结构以选择最优。默认: 1"
+                )
+            
+            run_button = gr.Button("🚀 开始预测", variant="primary", size="lg")
 
         with gr.Column(scale=2):
             gr.Markdown("### 步骤 3: 查看结果")
@@ -377,7 +490,6 @@ with gr.Blocks(theme=gr.themes.Base()) as demo:
                 with gr.TabItem("🔬 3D 结构"):
                     model_3d_view = gr.HTML(
                         label="最佳预测结构 (排名 1)", 
-                        # value=get_initial_molstar_html() # 初始加载默认 example.cif 或空查看器
                         value="<div style='height: 600px; display: flex; align-items: center; justify-content: center;'><p>等待预测开始...</p></div>"
                     )
                 with gr.TabItem("📊 置信度分数"):
@@ -391,17 +503,116 @@ with gr.Blocks(theme=gr.themes.Base()) as demo:
                 download_confidence = gr.File(label="下载置信度 (.json)")
                 download_affinity = gr.File(label="下载亲和力 (.json)")
 
-    # 将按钮点击事件连接到处理函数
+    # 定义用于管理序列状态的辅助函数
+    def add_sequence(chain_id, mol_type, sequence, current_sequences):
+        """添加新的序列配置到状态中"""
+        if not chain_id.strip() or not sequence.strip():
+            return current_sequences, current_sequences, "错误：链ID和序列不能为空"
+        
+        # 检查链ID是否已存在
+        for seq in current_sequences:
+            if seq["chain_id"] == chain_id.strip():
+                return current_sequences, current_sequences, f"错误：链ID '{chain_id}' 已存在"
+        
+        new_sequence = {
+            "chain_id": chain_id.strip(),
+            "mol_type": mol_type,
+            "sequence": sequence.strip()
+        }
+        updated_sequences = current_sequences + [new_sequence]
+        
+        # 转换为显示格式
+        display_data = [[seq["chain_id"], seq["mol_type"], seq["sequence"][:50] + "..." if len(seq["sequence"]) > 50 else seq["sequence"]] 
+                       for seq in updated_sequences]
+        
+        return updated_sequences, display_data, f"✅ 成功添加分子：{chain_id} ({mol_type})"
+    
+    def clear_sequences():
+        """清空所有序列配置"""
+        return [], [], "✅ 已清空所有分子配置"
+    
+    def toggle_affinity_options(enable_affinity):
+        """切换亲和力预测选项的可见性"""
+        return gr.update(visible=enable_affinity)
+    
+    def load_example1():
+        """加载示例1：蛋白质-配体复合物"""
+        example_sequences = [
+            {"chain_id": "A", "mol_type": "蛋白质", "sequence": "MKITIGSGVSAAKKFVGLKQPGRYDYKVLAYPIAVEALSLIYNKDLLPNPPKTWEEIPALDKELKAFDISTEELSA"},
+            {"chain_id": "L", "mol_type": "配体(SMILES)", "sequence": "C1=CC=C(C=C1)C(=O)O"}
+        ]
+        display_data = [[seq["chain_id"], seq["mol_type"], seq["sequence"][:50] + "..." if len(seq["sequence"]) > 50 else seq["sequence"]] 
+                       for seq in example_sequences]
+        return example_sequences, display_data, "✅ 已加载示例1：蛋白质-配体复合物"
+    
+    def load_example2():
+        """加载示例2：蛋白质-DNA复合物"""
+        example_sequences = [
+            {"chain_id": "A", "mol_type": "蛋白质", "sequence": "MTEYKLVVVGAGGVGKSALTIQLIQNHFVDEYDPTIEDSYRKQVVIDGETCLLDILDTAGQEEYSAMRDQYMRTGEGFLCVFAINNTKSFEDIHQYREQIKRVKDSDDVPMVLVGNKCDLAARTVESRQAQDLARSYGIPYIETSAKTRQGVEDAFYTLVREIRQHKLRKLNPPDESGPGCMSKCVLS"},
+            {"chain_id": "D", "mol_type": "DNA", "sequence": "ATCGATCGATCGATCG"}
+        ]
+        display_data = [[seq["chain_id"], seq["mol_type"], seq["sequence"][:50] + "..." if len(seq["sequence"]) > 50 else seq["sequence"]] 
+                       for seq in example_sequences]
+        return example_sequences, display_data, "✅ 已加载示例2：蛋白质-DNA复合物"
+    
+    def load_example3():
+        """加载示例3：多链复合物 (蛋白质二聚体 + RNA + 配体)"""
+        example_sequences = [
+            {"chain_id": "A", "mol_type": "蛋白质", "sequence": "MKITIGSGVSAAKKFVGLKQPGRYDYKVLAYPIAVEALSLIYNKDLLPNPPKTWEEIPALDKELKAFDISTEELSA"},
+            {"chain_id": "B", "mol_type": "蛋白质", "sequence": "MKITIGSGVSAAKKFVGLKQPGRYDYKVLAYPIAVEALSLIYNKDLLPNPPKTWEEIPALDKELKAFDISTEELSA"},
+            {"chain_id": "R", "mol_type": "RNA", "sequence": "AUCGAUCGAUCGAUCG"},
+            {"chain_id": "L1", "mol_type": "配体(CCD)", "sequence": "ATP"}
+        ]
+        display_data = [[seq["chain_id"], seq["mol_type"], seq["sequence"][:50] + "..." if len(seq["sequence"]) > 50 else seq["sequence"]] 
+                       for seq in example_sequences]
+        return example_sequences, display_data, "✅ 已加载示例3：多链复合物 (蛋白质二聚体 + RNA + ATP)"
+
+    # 事件绑定
+    # 示例按钮事件
+    example1_btn.click(
+        fn=load_example1,
+        outputs=[sequences_state, sequences_display, status_log]
+    )
+    
+    example2_btn.click(
+        fn=load_example2,
+        outputs=[sequences_state, sequences_display, status_log]
+    )
+    
+    example3_btn.click(
+        fn=load_example3,
+        outputs=[sequences_state, sequences_display, status_log]
+    )
+    
+    # 序列管理事件
+    add_sequence_btn.click(
+        fn=add_sequence,
+        inputs=[chain_id_input, mol_type_input, sequence_input, sequences_state],
+        outputs=[sequences_state, sequences_display, status_log]
+    )
+    
+    clear_sequences_btn.click(
+        fn=clear_sequences,
+        outputs=[sequences_state, sequences_display, status_log]
+    )
+    
+    enable_affinity.change(
+        fn=toggle_affinity_options,
+        inputs=[enable_affinity],
+        outputs=[affinity_binder_id]
+    )
+
+    # 将预测按钮点击事件连接到处理函数
     run_button.click(
         fn=run_boltz_prediction,
         inputs=[
-            protein_seq, 
-            ligand_type, 
-            ligand_id, 
+            sequences_state,
             use_msa_server,
             use_potentials,
             recycling_steps, 
-            diffusion_samples
+            diffusion_samples,
+            enable_affinity,
+            affinity_binder_id
         ],
         outputs=[
             status_log,
