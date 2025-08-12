@@ -387,6 +387,8 @@ with gr.Blocks(theme=gr.themes.Base()) as demo:
             1. **配置分子序列**：
                - 手动添加：输入链ID、选择分子类型、输入序列，然后点击"添加分子"
                - 快速开始：点击示例按钮快速加载预设配置
+               - 删除配置：在"删除指定链ID"框中输入要删除的链ID（支持用逗号分隔多个，如 A,B,C），然后点击"删除"
+               - 清空重置：点击"清空所有"按钮清除所有已配置的分子
                
             2. **选择预测选项**：
                - 建议保持"使用在线MSA服务器"选项开启
@@ -443,6 +445,14 @@ with gr.Blocks(theme=gr.themes.Base()) as demo:
             with gr.Row():
                 add_sequence_btn = gr.Button("➕ 添加分子", variant="secondary")
                 clear_sequences_btn = gr.Button("🗑️ 清空所有", variant="secondary")
+            
+            with gr.Row():
+                delete_chain_id = gr.Textbox(
+                    label="删除指定链ID", 
+                    placeholder="输入要删除的链ID，多个用逗号分隔 (例如: A,B,C)",
+                    scale=3
+                )
+                delete_specific_btn = gr.Button("❌ 删除", variant="secondary", scale=1)
             
             # 显示当前配置的序列
             sequences_display = gr.Dataframe(
@@ -531,6 +541,34 @@ with gr.Blocks(theme=gr.themes.Base()) as demo:
         """清空所有序列配置"""
         return [], [], "✅ 已清空所有分子配置"
     
+    def delete_specific_sequence(current_sequences, chain_ids_to_delete):
+        """删除指定链ID的序列配置，支持多个链ID用逗号分隔"""
+        if not chain_ids_to_delete.strip():
+            return current_sequences, current_sequences, "请输入要删除的链ID"
+        
+        # 解析链ID列表
+        chain_ids = [cid.strip() for cid in chain_ids_to_delete.split(',') if cid.strip()]
+        
+        if not chain_ids:
+            return current_sequences, current_sequences, "请输入有效的链ID"
+        
+        # 查找要删除的序列
+        remaining_sequences = [seq for seq in current_sequences if seq["chain_id"] not in chain_ids]
+        
+        deleted_count = len(current_sequences) - len(remaining_sequences)
+        
+        if deleted_count == 0:
+            return current_sequences, current_sequences, f"错误：未找到指定的链ID: {', '.join(chain_ids)}"
+        
+        # 转换为显示格式
+        display_data = [[seq["chain_id"], seq["mol_type"], seq["sequence"][:50] + "..." if len(seq["sequence"]) > 50 else seq["sequence"]] 
+                       for seq in remaining_sequences]
+        
+        if deleted_count == 1:
+            return remaining_sequences, display_data, f"✅ 成功删除链ID '{chain_ids[0]}' 的分子配置"
+        else:
+            return remaining_sequences, display_data, f"✅ 成功删除 {deleted_count} 个分子配置: {', '.join(chain_ids[:deleted_count])}"
+    
     def toggle_affinity_options(enable_affinity):
         """切换亲和力预测选项的可见性"""
         return gr.update(visible=enable_affinity)
@@ -593,6 +631,12 @@ with gr.Blocks(theme=gr.themes.Base()) as demo:
     
     clear_sequences_btn.click(
         fn=clear_sequences,
+        outputs=[sequences_state, sequences_display, status_log]
+    )
+    
+    delete_specific_btn.click(
+        fn=delete_specific_sequence,
+        inputs=[sequences_state, delete_chain_id],
         outputs=[sequences_state, sequences_display, status_log]
     )
     
